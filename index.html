@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Upload Space</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      background: #f0f4fa; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center; padding: 1.5rem;
+    }
+    .upload-card {
+      background: #fff; max-width: 620px; width: 100%;
+      border-radius: 2.5rem; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+      padding: 2.5rem 2rem;
+    }
+    h1 { font-size: 1.9rem; font-weight: 600; color: #0b1b33;
+      display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; }
+    .subhead { color: #4a5b6e; font-size: 0.95rem; margin-bottom: 2rem;
+      border-left: 4px solid #3b82f6; padding: 0.7rem 1rem;
+      background: #f8fafd; border-radius: 0 12px 12px 0; line-height: 1.4; }
+
+    .drop-area { border: 2px dashed #cbd5e1; background: #fafcff;
+      border-radius: 2rem; padding: 3rem 1.5rem; text-align: center;
+      cursor: pointer; transition: 0.2s; margin-bottom: 1.5rem; }
+    .drop-area.highlight { border-color: #3b82f6; background: #eef6ff; }
+    .drop-area p { color: #1e293b; font-weight: 500; margin-bottom: 0.5rem; font-size: 1.1rem; }
+    .drop-area small { color: #64748b; display: block; margin-top: 0.5rem; }
+    .icon { font-size: 3.5rem; line-height: 1; margin-bottom: 0.75rem; display: block; }
+    .file-input { display: none; }
+
+    .btn { background: #0b1b33; color: white; border: none; border-radius: 3rem;
+      padding: 0.9rem 2rem; font-size: 1rem; font-weight: 600; cursor: pointer;
+      transition: 0.2s; width: 100%; display: flex; align-items: center;
+      justify-content: center; gap: 0.5rem;
+      box-shadow: 0 8px 18px -6px rgba(11,27,51,0.3); }
+    .btn:hover:not(:disabled) { background: #1a2e4a; }
+    .btn:active:not(:disabled) { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+
+    .progress-container { margin-top: 1.5rem; background: #e9eef4;
+      border-radius: 30px; height: 10px; width: 100%; overflow: hidden; display: none; }
+    .progress-bar { height: 100%; width: 0%;
+      background: linear-gradient(90deg, #3b82f6, #8b5cf6); transition: width 0.2s ease; }
+
+    .status { margin-top: 1.25rem; font-size: 0.95rem; display: flex;
+      align-items: flex-start; gap: 0.5rem; min-height: 1.8rem;
+      color: #2c3e50; word-break: break-word; line-height: 1.5; }
+    .status .error { color: #b91c1c; }
+    .status .success { color: #0f7b3e; }
+    .status a { color: #2563eb; text-decoration: none; font-weight: 500; }
+    .status a:hover { text-decoration: underline; }
+
+    .reset-btn { background: transparent; border: 1px solid #cbd5e1;
+      color: #334155; border-radius: 2rem; padding: 0.4rem 1rem;
+      font-size: 0.8rem; font-weight: 500; cursor: pointer;
+      margin-left: 0.5rem; transition: background 0.15s; }
+    .reset-btn:hover { background: #f1f5f9; }
+  </style>
+</head>
+<body>
+  <div class="upload-card">
+    <h1><span>📦</span> Upload Space</h1>
+    <div class="subhead">
+      Drag a file and click upload — it goes straight to private storage.
+    </div>
+
+    <div class="drop-area" id="dropArea">
+      <span class="icon">📁</span>
+      <p>Drag & drop a file here</p>
+      <small>or click to browse</small>
+      <input type="file" id="fileInput" class="file-input" />
+    </div>
+
+    <button class="btn" id="uploadBtn" disabled>
+      <span>⬆️</span> Upload
+    </button>
+
+    <div class="progress-container" id="progressContainer">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <div class="status" id="status">
+      <span>ℹ️</span> <span>Select a file to begin.</span>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      // ==================================================================
+      // 🔴 FILL THIS ONE LINE — your Cloudflare Worker URL
+      // ==================================================================
+      const WORKER_URL = "https://upload-proxy.your-name.workers.dev";
+      // ==================================================================
+
+      const dropArea = document.getElementById('dropArea');
+      const fileInput = document.getElementById('fileInput');
+      const uploadBtn = document.getElementById('uploadBtn');
+      const progressContainer = document.getElementById('progressContainer');
+      const progressBar = document.getElementById('progressBar');
+      const statusEl = document.getElementById('status');
+
+      let selectedFile = null;
+      let isUploading = false;
+
+      function setStatus(message, type = 'info') {
+        let icon = 'ℹ️';
+        if (type === 'error') icon = '❌';
+        if (type === 'success') icon = '✅';
+        if (type === 'uploading') icon = '⏳';
+        statusEl.innerHTML = `<span>${icon}</span> <span class="${type}">${message}</span>`;
+      }
+
+      function handleFileSelect(file) {
+        if (!file) return;
+        selectedFile = file;
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+        const resetHtml = `<button class="reset-btn" id="clearFileBtn">✕ Clear</button>`;
+        statusEl.innerHTML =
+          `<span>ℹ️</span> <span>Selected: <strong>${file.name}</strong> (${sizeMB} MB)</span> ${resetHtml}`;
+        uploadBtn.disabled = false;
+        progressContainer.style.display = 'none';
+        progressBar.style.width = '0%';
+
+        const clearBtn = document.getElementById('clearFileBtn');
+        if (clearBtn) {
+          clearBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            selectedFile = null;
+            fileInput.value = '';
+            uploadBtn.disabled = true;
+            progressContainer.style.display = 'none';
+            progressBar.style.width = '0%';
+            setStatus('Select a file to begin.');
+          });
+        }
+      }
+
+      dropArea.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) handleFileSelect(e.target.files[0]);
+      });
+
+      ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(ev => {
+        dropArea.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); });
+      });
+      dropArea.addEventListener('dragenter', () => dropArea.classList.add('highlight'));
+      dropArea.addEventListener('dragover',  () => dropArea.classList.add('highlight'));
+      dropArea.addEventListener('dragleave', () => dropArea.classList.remove('highlight'));
+      dropArea.addEventListener('drop', (e) => {
+        dropArea.classList.remove('highlight');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+          handleFileSelect(files[0]);
+          try { fileInput.files = files; } catch (_) {}
+        }
+      });
+
+      function fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result;
+            const comma = result.indexOf(',');
+            resolve(result.slice(comma + 1));
+          };
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+      }
+
+      uploadBtn.addEventListener('click', async () => {
+        if (!selectedFile) { setStatus('Please select a file first.', 'error'); return; }
+        if (isUploading) return;
+        if (selectedFile.size > 25 * 1024 * 1024) {
+          setStatus('File too large (max ~25 MB).', 'error');
+          return;
+        }
+
+        isUploading = true;
+        uploadBtn.disabled = true;
+        progressContainer.style.display = 'block';
+        progressBar.style.width = '20%';
+        setStatus('Encoding file…', 'uploading');
+
+        try {
+          const base64Content = await fileToBase64(selectedFile);
+
+          setStatus('Uploading…', 'uploading');
+          progressBar.style.width = '60%';
+
+          const res = await fetch(WORKER_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: selectedFile.name,
+              content: base64Content
+            })
+          });
+
+          progressBar.style.width = '90%';
+
+          if (!res.ok) {
+            let errText = `${res.status} ${res.statusText}`;
+            try {
+              const errJson = await res.json();
+              if (errJson && errJson.message) errText = errJson.message;
+            } catch (_) {}
+            throw new Error(errText);
+          }
+
+          const data = await res.json();
+          progressBar.style.width = '100%';
+
+          setStatus(
+            `Upload complete! ` +
+            (data.htmlUrl
+              ? `<a href="${data.htmlUrl}" target="_blank" rel="noopener">View on GitHub</a>`
+              : `Saved as <strong>${data.path || 'file'}</strong>`),
+            'success'
+          );
+        } catch (err) {
+          console.error(err);
+          setStatus(`Upload failed: ${err.message}`, 'error');
+          progressContainer.style.display = 'none';
+          progressBar.style.width = '0%';
+        } finally {
+          isUploading = false;
+          uploadBtn.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
